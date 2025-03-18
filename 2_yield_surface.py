@@ -11,7 +11,7 @@ if "max_pc" not in st.session_state:
 if "max_epsilon_p" not in st.session_state:
     st.session_state.max_epsilon_p = 0
 if "initial_data" not in st.session_state:
-    st.session_state.initial_data = {}
+    st.session_state.initial_data = None
 
 # Функция для расчета предельного девиаторного напряжения qf
 def q_f(p, phi, c):
@@ -153,35 +153,52 @@ st.title("Модель с двойным упрочнением на плоск�
 # Боковая панель для ввода данных
 with st.sidebar:
     st.header("Ввод данных")
+    modify_state = st.checkbox("Изменить напряженное состояние")
+
+    # Ввод данных пользователем
     gamma = st.number_input("Удельный вес грунта, γ (кН/м³):", value=18.0)
     h = st.number_input("Глубина, h (м):", value=5.0)
     c = st.number_input("Удельное сцепление, c (кПа):", value=20.0)
     phi = st.number_input("Угол внутреннего трения, φ (°):", value=20.0)
     pc_input = st.number_input("Давление предупрочнения, pc (кПа):", value=0)
-    modify_state = st.checkbox("Изменить напряженное состояние")
 
-    # Сохраняем исходные данные при активации чекбокса
+    # Сохраняем исходные данные при первом включении чекбокса
+    if modify_state and st.session_state.initial_data is None:
+        st.session_state.initial_data = {
+            "gamma": gamma,
+            "h": h,
+            "c": c,
+            "phi": phi,
+            "pc_input": pc_input
+        }
+
+    # Если чекбокс активен, используем сохраненные данные и блокируем редактирование
     if modify_state:
-        if "initial_data" not in st.session_state or not st.session_state.initial_data:
-            st.session_state.initial_data = {
-                "gamma": gamma,
-                "h": h,
-                "c": c,
-                "phi": phi,
-                "pc_input": pc_input
-            }
-
-    # Используем сохраненные данные, если чекбокс активен
-    if modify_state and st.session_state.initial_data:
         gamma = st.session_state.initial_data["gamma"]
         h = st.session_state.initial_data["h"]
         c = st.session_state.initial_data["c"]
         phi = st.session_state.initial_data["phi"]
         pc_input = st.session_state.initial_data["pc_input"]
 
-        pc_slider = st.slider("Изменение объемной поверхности текучести", 0.0, 300.0, float(st.session_state.max_pc))
+        st.write("Исходные данные (заблокированы):")
+        st.write(f"Удельный вес грунта, γ (кН/м³): {gamma}")
+        st.write(f"Глубина, h (м): {h}")
+        st.write(f"Удельное сцепление, c (кПа): {c}")
+        st.write(f"Угол внутреннего трения, φ (°): {phi}")
+        st.write(f"Давление предупрочнения, pc (кПа): {pc_input}")
+
+        # Рассчитываем начальное значение pc для слайдера
+        K0 = 1 - np.sin(np.radians(phi))
+        sigma_v = gamma * h
+        sigma_h = K0 * sigma_v
+        p_point_natural = (sigma_v + 2 * sigma_h) / 3
+        q_point_natural = sigma_v - sigma_h
+        initial_pc = max(pc_input, np.sqrt(p_point_natural**2 + q_point_natural**2))
+
+        pc_slider = st.slider("Изменение объемной поверхности текучести", 0.0, 300.0, float(initial_pc))
         epsilon_p_slider = st.slider("Изменение сдвиговой поверхности текучести", 0.0, 0.3, float(st.session_state.max_epsilon_p), step=0.005)
     else:
+        # Если чекбокс не активен, разрешаем редактирование
         pc_slider = pc_input
         epsilon_p_slider = 0.1
 
