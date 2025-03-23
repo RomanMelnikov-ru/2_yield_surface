@@ -162,8 +162,8 @@ with st.sidebar:
     phi = st.number_input("Угол внутреннего трения, φ (°):", value=20.0)
     pc_input = st.number_input("Давление предупрочнения, pc (кПа):", value=0)
 
-    # Сохраняем исходные данные при первом включении чекбокса
-    if modify_state and st.session_state.initial_data is None:
+    # Сохраняем актуальные данные при активации чекбокса
+    if modify_state:
         st.session_state.initial_data = {
             "gamma": gamma,
             "h": h,
