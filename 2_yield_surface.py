@@ -56,11 +56,9 @@ def plot_graph(gamma, h, c, phi, pc_input, modify_state, pc_slider, epsilon_p_sl
         st.session_state.max_pc = max(st.session_state.max_pc, pc)  # Обновляем максимальное значение pc
         st.session_state.max_epsilon_p = max(st.session_state.max_epsilon_p, epsilon_p)  # Обновляем максимальное значение epsilon_p
     else:
-        # Используем максимальные значения, если слайдер уменьшается
-        pc = max(pc_slider, st.session_state.max_pc)
-        epsilon_p = max(epsilon_p_slider, st.session_state.max_epsilon_p)
-        st.session_state.max_pc = max(st.session_state.max_pc, pc)  # Обновляем максимальное значение pc
-        st.session_state.max_epsilon_p = max(st.session_state.max_epsilon_p, epsilon_p)  # Обновляем максимальное значение epsilon_p
+        # Используем значения из слайдеров
+        pc = pc_slider
+        epsilon_p = epsilon_p_slider
 
     # Диапазон значений p (среднее эффективное напряжение)
     p_min = -c / M  # Пересечение линии Mohr-Coulomb с осью p
@@ -155,30 +153,20 @@ with st.sidebar:
     st.header("Ввод данных")
     modify_state = st.checkbox("Изменить напряженное состояние")
 
-    # Ввод данных пользователем
-    gamma = st.number_input("Удельный вес грунта, γ (кН/м³):", value=18.0)
-    h = st.number_input("Глубина, h (м):", value=5.0)
-    c = st.number_input("Удельное сцепление, c (кПа):", value=20.0)
-    phi = st.number_input("Угол внутреннего трения, φ (°):", value=20.0)
-    pc_input = st.number_input("Давление предупрочнения, pc (кПа):", value=0)
-
-    # Сохраняем актуальные данные при активации чекбокса
-    if modify_state:
-        st.session_state.initial_data = {
-            "gamma": gamma,
-            "h": h,
-            "c": c,
-            "phi": phi,
-            "pc_input": pc_input
-        }
-
-    # Если чекбокс активен, используем сохраненные данные и блокируем редактирование
-    if modify_state:
-        gamma = st.session_state.initial_data["gamma"]
-        h = st.session_state.initial_data["h"]
-        c = st.session_state.initial_data["c"]
-        phi = st.session_state.initial_data["phi"]
-        pc_input = st.session_state.initial_data["pc_input"]
+    # Ввод данных пользователем (скрывается при активации чекбокса)
+    if not modify_state:
+        gamma = st.number_input("Удельный вес грунта, γ (кН/м³):", value=18.0)
+        h = st.number_input("Глубина, h (м):", value=5.0)
+        c = st.number_input("Удельное сцепление, c (кПа):", value=20.0)
+        phi = st.number_input("Угол внутреннего трения, φ (°):", value=20.0)
+        pc_input = st.number_input("Давление предупрочнения, pc (кПа):", value=0)
+    else:
+        # Используем актуальные данные из полей ввода
+        gamma = st.session_state.get("gamma", 18.0)
+        h = st.session_state.get("h", 5.0)
+        c = st.session_state.get("c", 20.0)
+        phi = st.session_state.get("phi", 20.0)
+        pc_input = st.session_state.get("pc_input", 0)
 
         st.write("Исходные данные (заблокированы):")
         st.write(f"Удельный вес грунта, γ (кН/м³): {gamma}")
@@ -187,6 +175,15 @@ with st.sidebar:
         st.write(f"Угол внутреннего трения, φ (°): {phi}")
         st.write(f"Давление предупрочнения, pc (кПа): {pc_input}")
 
+    # Сохраняем актуальные данные в session_state
+    st.session_state.gamma = gamma
+    st.session_state.h = h
+    st.session_state.c = c
+    st.session_state.phi = phi
+    st.session_state.pc_input = pc_input
+
+    # Управление упругой областью (слайдеры)
+    if modify_state:
         # Рассчитываем начальное значение pc для слайдера
         K0 = 1 - np.sin(np.radians(phi))
         sigma_v = gamma * h
@@ -198,7 +195,7 @@ with st.sidebar:
         pc_slider = st.slider("Изменение объемной поверхности текучести", 0.0, 300.0, float(initial_pc))
         epsilon_p_slider = st.slider("Изменение сдвиговой поверхности текучести", 0.0, 0.3, float(st.session_state.max_epsilon_p), step=0.005)
     else:
-        # Если чекбокс не активен, разрешаем редактирование
+        # Если чекбокс не активен, используем значения по умолчанию
         pc_slider = pc_input
         epsilon_p_slider = 0.1
 
