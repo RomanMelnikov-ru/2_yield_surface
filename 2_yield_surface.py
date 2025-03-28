@@ -2,216 +2,305 @@ import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
 
-# Константы
-EPSILON_REF = 0.1  # Параметр для нелинейного закона
 
 # Инициализация состояния сессии
-if "initial_data" not in st.session_state:
-    st.session_state.initial_data = None
-if "modified_pc" not in st.session_state:
-    st.session_state.modified_pc = None
-if "modified_epsilon_p" not in st.session_state:
-    st.session_state.modified_epsilon_p = None
+def init_session_state():
+    session_vars = {
+        'p_point_natural': None,
+        'q_point_natural': None,
+        'epsilon_p': None,
+        'pc': None,
+        'max_pc': None,
+        'max_epsilon_p': None,
+        'gamma': 18.0,
+        'h': 5.0,
+        'c': 20.0,
+        'phi': 20.0,
+        'pc_input': 0.0,
+        'modify_state': False,
+        'show_sliders': False
+    }
+    for key, value in session_vars.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
-# Функции для расчетов
+init_session_state()
+epsilon_ref = 0.1  # Параметр для нелинейного закона
+
+
+# Расчетные функции
 def q_f(p, phi, c):
-    M = (6 * np.sin(np.radians(phi))) / (3 - np.sin(np.radians(phi)))
+    M = (6 * np.sin(np.radians(phi))) / (3 - np.sin(np.radians(phi))) if phi != 0 else 0
     return M * p + c
 
 
 def yield_surface(p, q_ult, epsilon_p, epsilon_ref):
-    return q_ult * (1 - np.exp(-epsilon_p / epsilon_ref))
+    return q_ult * (1 - np.exp(-epsilon_p / epsilon_ref)) if epsilon_p != 0 else 0
 
 
 def calculate_epsilon_p(p_natural, q_natural, phi, c, epsilon_ref):
+    if c == 0 and phi == 0:
+        return 0
     q_ult = q_f(p_natural, phi, c)
     if q_natural >= q_ult:
         return np.inf
-    return -epsilon_ref * np.log(1 - q_natural / q_ult)
+    return -epsilon_ref * np.log(1 - q_natural / q_ult) if q_ult != 0 else 0
 
 
-def calculate_natural_state(gamma, h, phi):
-    K0 = 1 - np.sin(np.radians(phi))
-    sigma_v = gamma * h
-    sigma_h = K0 * sigma_v
-    p = (sigma_v + 2 * sigma_h) / 3
-    q = sigma_v - sigma_h
-    return p, q
+def find_intersection(p, q_cap, q_yield):
+    for i in range(len(p) - 1):
+        if (q_cap[i] - q_yield[i]) * (q_cap[i + 1] - q_yield[i + 1]) <= 0:
+            return p[i], q_cap[i]
+    return None, None
 
 
-def calculate_initial_pc(p_natural, q_natural, pc_input):
-    return max(pc_input, np.sqrt(p_natural ** 2 + q_natural ** 2))
+# Основная функция построения графика
+def plot_hardening_soil():
+    try:
+        # Получаем параметры
+        gamma = st.session_state.gamma
+        h = st.session_state.h
+        c = st.session_state.c
+        phi = st.session_state.phi
+        pc_input = st.session_state.pc_input
 
+        # Расчет параметров
+        K0 = 1 - np.sin(np.radians(phi)) if phi != 0 else 1.0
+        M = (6 * np.sin(np.radians(phi))) / (3 - np.sin(np.radians(phi))) if phi != 0 else 0
 
-# Интерфейс Streamlit
-st.title("Модель с двойным упрочнением на плоскости p-q")
+        # Бытовое давление грунта
+        sigma_v = gamma * h
+        sigma_h = K0 * sigma_v
+        st.session_state.p_point_natural = (sigma_v + 2 * sigma_h) / 3
+        st.session_state.q_point_natural = sigma_v - sigma_h
 
-# Боковая панель для ввода данных
-with st.sidebar:
-    st.header("Управление")
-    modify_state = st.checkbox("Изменить напряженное состояние")
+        # Инициализация параметров
+        if not st.session_state.modify_state:
+            st.session_state.pc = max(pc_input, np.sqrt(
+                st.session_state.p_point_natural ** 2 + st.session_state.q_point_natural ** 2))
+            st.session_state.epsilon_p = calculate_epsilon_p(
+                st.session_state.p_point_natural,
+                st.session_state.q_point_natural,
+                phi, c, epsilon_ref
+            )
+            st.session_state.max_pc = st.session_state.pc
+            st.session_state.max_epsilon_p = st.session_state.epsilon_p
+            st.session_state.slider_pc = st.session_state.pc
+            st.session_state.slider_epsilon_p = st.session_state.epsilon_p
 
-    # Ввод исходных данных (показывается только когда чекбокс неактивен)
-    if not modify_state:
-        st.header("Исходные параметры")
-        gamma = st.number_input("Удельный вес грунта, γ (кН/м³):", value=18.0, min_value=0.1)
-        h = st.number_input("Глубина, h (м):", value=5.0, min_value=0.1)
-        c = st.number_input("Удельное сцепление, c (кПа):", value=20.0, min_value=0.0)
-        phi = st.number_input("Угол внутреннего трения, φ (°):", value=20.0, min_value=0.0, max_value=45.0)
-        pc_input = st.number_input("Давление предуплотнения, pc (кПа):", value=0.0, min_value=0.0)
+        # Диапазон значений p с учетом отрицательной области при c > 0
+        p_min = -c / M if M != 0 and c > 0 else 0
+        p_max = max(250, st.session_state.pc * 1.2) if st.session_state.pc > 0 else 250
+        p = np.linspace(p_min, p_max, 200)
+        q_mc = q_f(p, phi, c)
 
-        # Рассчитываем природное состояние
-        p_natural, q_natural = calculate_natural_state(gamma, h, phi)
-        initial_pc = calculate_initial_pc(p_natural, q_natural, pc_input)
-        initial_epsilon_p = calculate_epsilon_p(p_natural, q_natural, phi, c, EPSILON_REF)
+        # Cap Hardening Surface
+        p_cap = np.linspace(0, st.session_state.pc, 100) if st.session_state.pc > 0 else np.array([0])
+        q_cap = np.sqrt(st.session_state.pc ** 2 - p_cap ** 2) if st.session_state.pc > 0 else np.array([0])
 
-        # Сохраняем текущие параметры как исходные
-        st.session_state.initial_data = {
-            "gamma": gamma,
-            "h": h,
-            "c": c,
-            "phi": phi,
-            "pc_input": pc_input,
-            "initial_pc": initial_pc,
-            "initial_epsilon_p": initial_epsilon_p
-        }
+        # Поверхность текучести
+        q_ult = q_f(p, phi, c)
+        q_yield = yield_surface(p, q_ult, st.session_state.epsilon_p, epsilon_ref)
 
-        # Сбрасываем модифицированные параметры
-        st.session_state.modified_pc = None
-        st.session_state.modified_epsilon_p = None
-    else:
-        # Используем сохраненные исходные данные
-        if st.session_state.initial_data is None:
-            st.warning("Сначала введите исходные параметры")
-            st.stop()
+        # Точка пересечения
+        p_intersect, q_intersect = find_intersection(
+            p_cap, q_cap,
+            yield_surface(p_cap, q_f(p_cap, phi, c), st.session_state.epsilon_p, epsilon_ref)
+        ) if st.session_state.pc > 0 else (None, None)
 
-        data = st.session_state.initial_data
-        st.header("Текущие параметры")
-        st.write(f"Удельный вес: {data['gamma']} кН/м³")
-        st.write(f"Глубина: {data['h']} м")
-        st.write(f"Удельное сцепление: {data['c']} кПа")
-        st.write(f"Угол внутреннего трения: {data['phi']}°")
-        st.write(f"Давление предуплотнения: {data['pc_input']} кПа")
+        # Создание графика
+        fig = go.Figure()
 
-        # Управление упругой областью
-        st.header("Изменение напряженного состояния")
+        # Добавление осей координат
+        fig.add_shape(type="line", x0=min(p_min, 0), y0=0, x1=p_max, y1=0, line=dict(color="black", width=1))
+        fig.add_shape(type="line", x0=0, y0=0, x1=0, y1=max(200, np.max(q_mc) * 1.1), line=dict(color="black", width=1))
 
-        # Инициализация модифицированных параметров
-        if st.session_state.modified_pc is None:
-            st.session_state.modified_pc = data['initial_pc']
-        if st.session_state.modified_epsilon_p is None:
-            st.session_state.modified_epsilon_p = data['initial_epsilon_p']
+        # Закрашивание всей упругой области
+        if st.session_state.pc > 0:
+            # Область под эллипсом и поверхностью текучести
+            p_fill = np.linspace(0, st.session_state.pc, 100)
+            q_cap_fill = np.sqrt(st.session_state.pc ** 2 - p_fill ** 2)
+            q_yield_fill = yield_surface(p_fill, q_f(p_fill, phi, c), st.session_state.epsilon_p, epsilon_ref)
+            q_fill_upper = np.minimum(q_cap_fill, q_yield_fill)
 
-        # Слайдеры для управления (сразу изменяют значения)
-        st.session_state.modified_pc = st.slider(
-            "Среднее напряжение р (кПа)",
-            min_value=float(data['initial_pc']),
-            max_value=300.0,
-            value=float(st.session_state.modified_pc),
-            step=0.1
-        )
+            fig.add_trace(go.Scatter(
+                x=np.concatenate([p_fill, p_fill[::-1]]),
+                y=np.concatenate([q_fill_upper, np.zeros_like(p_fill)[::-1]]),
+                fill='toself',
+                fillcolor='rgba(173, 216, 230, 0.5)',
+                line=dict(color='rgba(173, 216, 230, 0.5)'),
+                name="Упругая область"
+            ))
 
-        st.session_state.modified_epsilon_p = st.slider(
-            "Сдвиговая деформация (εₚ)",
-            min_value=float(data['initial_epsilon_p']),
-            max_value=0.20,
-            value=float(st.session_state.modified_epsilon_p),
-            step=0.001
-        )
-
-
-# Функция построения графика
-def plot_yield_surfaces(gamma, h, c, phi, pc_input, modify_state):
-    # Получаем актуальные данные
-    if modify_state:
-        data = st.session_state.initial_data
-        pc = st.session_state.modified_pc
-        epsilon_p = st.session_state.modified_epsilon_p
-    else:
-        p_natural, q_natural = calculate_natural_state(gamma, h, phi)
-        pc = calculate_initial_pc(p_natural, q_natural, pc_input)
-        epsilon_p = calculate_epsilon_p(p_natural, q_natural, phi, c, EPSILON_REF)
-        data = st.session_state.initial_data
-
-    # Расчет параметров
-    M = (6 * np.sin(np.radians(phi))) / (3 - np.sin(np.radians(phi)))
-    p_min = -c / M if c > 0 else 0
-    p = np.linspace(p_min, 250, 100)
-
-    # Линия разрушения Мора-Кулона
-    q_mc = M * p + c
-
-    # Cap Hardening Surface (эллиптическая поверхность)
-    p_cap = np.linspace(0, pc, 100)
-    q_cap = np.sqrt(pc ** 2 - p_cap ** 2)
-
-    # Поверхность текучести
-    q_yield = yield_surface(p, q_f(p, phi, c), epsilon_p, EPSILON_REF)
-
-    # Создание графика
-    fig = go.Figure()
-
-    # Область упругого поведения (включая отрицательные значения p)
-    if pc > 0:
-        # Положительная часть p
-        p_fill_pos = np.linspace(0, pc, 100)
-        q_fill_upper_pos = np.minimum(
-            yield_surface(p_fill_pos, q_f(p_fill_pos, phi, c), epsilon_p, EPSILON_REF),
-            np.sqrt(pc ** 2 - p_fill_pos ** 2)
-        )
-
-        # Отрицательная часть p (если есть)
-        if p_min < 0:
+        # Область в отрицательных p при c > 0
+        if c > 0 and M != 0:
             p_fill_neg = np.linspace(p_min, 0, 100)
-            q_fill_upper_neg = yield_surface(p_fill_neg, q_f(p_fill_neg, phi, c), epsilon_p, EPSILON_REF)
+            q_fill_neg = yield_surface(p_fill_neg, q_f(p_fill_neg, phi, c), st.session_state.epsilon_p, epsilon_ref)
 
-            # Объединяем области
-            p_fill = np.concatenate([p_fill_neg, p_fill_pos])
-            q_fill_upper = np.concatenate([q_fill_upper_neg, q_fill_upper_pos])
-        else:
-            p_fill = p_fill_pos
-            q_fill_upper = q_fill_upper_pos
+            fig.add_trace(go.Scatter(
+                x=np.concatenate([p_fill_neg, p_fill_neg[::-1]]),
+                y=np.concatenate([q_fill_neg, np.zeros_like(p_fill_neg)[::-1]]),
+                fill='toself',
+                fillcolor='rgba(173, 216, 230, 0.5)',
+                line=dict(color='rgba(173, 216, 230, 0.5)'),
+                showlegend=False
+            ))
 
+        # Линии графика
         fig.add_trace(go.Scatter(
-            x=p_fill, y=q_fill_upper,
-            fill='tozeroy',
-            fillcolor='rgba(173, 216, 230, 0.5)',
-            line=dict(color='rgba(0,0,0,0)'),
-            name="Область упругого поведения",
-            showlegend=True
+            x=p, y=q_mc,
+            mode='lines',
+            name="Mohr-Coulomb Failure Criterion",
+            line=dict(color='red', width=2)
         ))
 
-    # Линии на графике
-    fig.add_trace(go.Scatter(x=p, y=q_mc, mode='lines', name='Линия прочности Мора-Кулона', line=dict(color='red')))
-    fig.add_trace(
-        go.Scatter(x=p_cap, y=q_cap, mode='lines', name='Объемная поверхность текучести', line=dict(color='navy', dash='dot')))
-    fig.add_trace(
-        go.Scatter(x=p, y=q_yield, mode='lines', name='Сдвиговая поверхность текучести', line=dict(color='blue', dash='dot')))
+        if st.session_state.pc > 0:
+            fig.add_trace(go.Scatter(
+                x=p_cap, y=q_cap,
+                mode='lines',
+                name="Объемная поверхность текучести",
+                line=dict(color='blue', dash='dot', width=2)
+            ))
 
-    # Оси и оформление
-    fig.update_layout(
-        xaxis_title="p (кПа)",
-        yaxis_title="q (кПа)",
-        xaxis_range=[p_min - 5 if p_min < 0 else 0, 250],
-        yaxis_range=[-5, 250],
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    fig.add_shape(type="line", x0=0, y0=0, x1=250, y1=0, line=dict(color="black", width=2))
-    fig.add_shape(type="line", x0=0, y0=0, x1=0, y1=250, line=dict(color="black", width=2))
+        fig.add_trace(go.Scatter(
+            x=p, y=q_yield,
+            mode='lines',
+            name="Сдвиговая поверхность текучести",
+            line=dict(color='green', dash='dot', width=2)
+        ))
 
-    return fig
+        # Точки на графике
+        #fig.add_trace(go.Scatter(
+        #    x=[st.session_state.p_point_natural],
+        #    y=[st.session_state.q_point_natural],
+        #    mode='markers',
+        #    marker=dict(color='black', size=10),
+        #    name=f"Природное состояние (p={st.session_state.p_point_natural:.1f}, q={st.session_state.q_point_natural:.1f})"
+        #))
 
-
-# Построение графика
-if st.session_state.initial_data is not None or not modify_state:
-    if modify_state:
-        data = st.session_state.initial_data
-        fig = plot_yield_surfaces(
-            data['gamma'], data['h'], data['c'], data['phi'],
-            data['pc_input'], modify_state
+        # Настройки графика
+        fig.update_layout(
+            xaxis_title="p (кПа)",
+            yaxis_title="q (кПа)",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            xaxis=dict(range=[min(p_min, -10), p_max]),
+            yaxis=dict(range=[0, max(200, np.max(q_mc) * 1.1)]),
+            height=600,
+            margin=dict(l=50, r=50, t=80, b=50),
+            plot_bgcolor='white'
         )
-    else:
-        fig = plot_yield_surfaces(gamma, h, c, phi, pc_input, modify_state)
-    st.plotly_chart(fig, use_container_width=True)
+
+        # Равный масштаб осей
+        fig.update_yaxes(
+            scaleanchor="x",
+            scaleratio=1,
+            constrain="domain"
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
+    except Exception as e:
+        st.error(f"Ошибка при построении графика: {str(e)}")
+
+
+# Функции обновления
+def update_pc():
+    new_pc = st.session_state.slider_pc
+    if new_pc > st.session_state.max_pc:
+        st.session_state.pc = new_pc
+        st.session_state.max_pc = new_pc
+
+
+def update_epsilon_p():
+    new_epsilon_p = st.session_state.slider_epsilon_p
+    if new_epsilon_p > st.session_state.max_epsilon_p:
+        st.session_state.epsilon_p = new_epsilon_p
+        st.session_state.max_epsilon_p = new_epsilon_p
+
+
+# Интерфейс приложения
+st.set_page_config(layout="wide", page_title="Двойное упрочнение в модели Hardening Soil")
+
+# Сайдбар для ввода параметров
+with st.sidebar:
+    st.header("Параметры грунта")
+
+    st.number_input(
+        "Удельный вес грунта, γ (кН/м³):",
+        min_value=0.1,
+        max_value=20.0,
+        value=st.session_state.gamma,
+        step=0.1,
+        key="gamma"
+    )
+
+    st.number_input(
+        "Глубина, h (м):",
+        min_value=0.1,
+        max_value=10.0,
+        value=st.session_state.h,
+        step=0.5,
+        key="h"
+    )
+
+    st.number_input(
+        "Сцепление, c (кПа):",
+        min_value=0.0,
+        max_value=40.0,
+        value=st.session_state.c,
+        step=1.0,
+        key="c"
+    )
+
+    st.number_input(
+        "Угол внутреннего трения, φ (°):",
+        min_value=0.0,
+        max_value=40.0,
+        value=st.session_state.phi,
+        step=1.0,
+        key="phi"
+    )
+
+    st.number_input(
+        "Давление предупрочнения, pc (кПа):",
+        min_value=0.0,
+        max_value=300.0,
+        value=st.session_state.pc_input,
+        step=10.0,
+        key="pc_input"
+    )
+
+    st.checkbox(
+        "Изменить напряженное состояние",
+        value=st.session_state.modify_state,
+        key="modify_state",
+        on_change=lambda: st.session_state.update({
+            'show_sliders': st.session_state.modify_state
+        })
+    )
+
+    if st.session_state.show_sliders:
+        st.slider(
+            "Изменение объемной поверхности текучести",
+            min_value=0.0,
+            max_value=300.0,
+            value=st.session_state.get('slider_pc', st.session_state.pc_input),
+            step=1.0,
+            key="slider_pc",
+            on_change=update_pc
+        )
+
+        st.slider(
+            "Изменение сдвиговой поверхности текучести",
+            min_value=0.0,
+            max_value=0.35,
+            value=st.session_state.get('slider_epsilon_p', 0.1),
+            step=0.005,
+            key="slider_epsilon_p",
+            on_change=update_epsilon_p
+        )
+
+# Основная область с графиком
+st.title("Двойное упрочнение в модели Hardening Soil")
+plot_hardening_soil()
