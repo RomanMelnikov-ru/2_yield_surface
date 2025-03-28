@@ -116,35 +116,42 @@ def plot_hardening_soil():
         fig.add_shape(type="line", x0=min(p_min, 0), y0=0, x1=p_max, y1=0, line=dict(color="black", width=1))
         fig.add_shape(type="line", x0=0, y0=0, x1=0, y1=max(200, np.max(q_mc) * 1.1), line=dict(color="black", width=1))
 
-        # Закрашивание всей упругой области
+        # Собираем все точки для заливки упругой области
+        x_fill = []
+        y_fill = []
+
+        # Положительная область (эллипс и поверхность текучести)
         if st.session_state.pc > 0:
-            # Область под эллипсом и поверхностью текучести
             p_fill = np.linspace(0, st.session_state.pc, 100)
             q_cap_fill = np.sqrt(st.session_state.pc ** 2 - p_fill ** 2)
             q_yield_fill = yield_surface(p_fill, q_f(p_fill, phi, c), st.session_state.epsilon_p, epsilon_ref)
             q_fill_upper = np.minimum(q_cap_fill, q_yield_fill)
 
-            fig.add_trace(go.Scatter(
-                x=np.concatenate([p_fill, p_fill[::-1]]),
-                y=np.concatenate([q_fill_upper, np.zeros_like(p_fill)[::-1]]),
-                fill='toself',
-                fillcolor='rgba(173, 216, 230, 0.5)',
-                line=dict(color='rgba(173, 216, 230, 0.5)'),
-                name="Упругая область"
-            ))
+            x_fill.extend(p_fill)
+            y_fill.extend(q_fill_upper)
+            x_fill.extend(p_fill[::-1])
+            y_fill.extend(np.zeros_like(p_fill)[::-1])
 
-        # Область в отрицательных p при c > 0
+        # Отрицательная область при c > 0
         if c > 0 and M != 0:
             p_fill_neg = np.linspace(p_min, 0, 100)
             q_fill_neg = yield_surface(p_fill_neg, q_f(p_fill_neg, phi, c), st.session_state.epsilon_p, epsilon_ref)
 
+            x_fill.extend(p_fill_neg)
+            y_fill.extend(q_fill_neg)
+            x_fill.extend(p_fill_neg[::-1])
+            y_fill.extend(np.zeros_like(p_fill_neg)[::-1])
+
+        # Добавляем одну общую заливку для всей упругой области
+        if x_fill:
             fig.add_trace(go.Scatter(
-                x=np.concatenate([p_fill_neg, p_fill_neg[::-1]]),
-                y=np.concatenate([q_fill_neg, np.zeros_like(p_fill_neg)[::-1]]),
+                x=x_fill,
+                y=y_fill,
                 fill='toself',
                 fillcolor='rgba(173, 216, 230, 0.5)',
                 line=dict(color='rgba(173, 216, 230, 0.5)'),
-                showlegend=False
+                name="Упругая область",
+                showlegend=True
             ))
 
         # Линии графика
@@ -169,15 +176,6 @@ def plot_hardening_soil():
             name="Сдвиговая поверхность текучести",
             line=dict(color='green', dash='dot', width=2)
         ))
-
-        # Точки на графике
-        #fig.add_trace(go.Scatter(
-        #    x=[st.session_state.p_point_natural],
-        #    y=[st.session_state.q_point_natural],
-        #    mode='markers',
-        #    marker=dict(color='black', size=10),
-        #    name=f"Природное состояние (p={st.session_state.p_point_natural:.1f}, q={st.session_state.q_point_natural:.1f})"
-        #))
 
         # Настройки графика
         fig.update_layout(
